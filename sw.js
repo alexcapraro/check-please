@@ -1,5 +1,5 @@
 // Check Please offline cache. Bump VERSION when you upload changed files so phones pick them up.
-const VERSION = "check-please-v3";
+const VERSION = "check-please-v5";
 const SHELL = ["./", "index.html", "manifest.webmanifest", "icon-192.png", "icon-512.png", "maskable-512.png"];
 
 self.addEventListener("install", (e) => {

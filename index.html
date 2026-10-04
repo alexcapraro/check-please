@@ -2,11 +2,13 @@
 <html lang="en">
 <title>Check Please</title>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#F6F1E7">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Check Please">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="format-detection" content="telephone=no">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -44,6 +46,12 @@
 html, body { height: 100%; overscroll-behavior: none; }
 body { margin: 0; background: var(--ground); color: var(--ink); font-family: var(--sans); font-size: 16px; line-height: 1.4; overscroll-behavior: none; }
 button, input, select { font: inherit; color: inherit; }
+/* Feel like an app: no pinch or double-tap zoom, no long-press text selection, search or link previews. */
+html { touch-action: manipulation; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+input, textarea, select { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; font-size: 16px !important; }
+img, svg { -webkit-user-drag: none; user-drag: none; pointer-events: none; }
+button svg, a svg { pointer-events: none; }
 button { cursor: pointer; }
 :focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
 .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
@@ -344,6 +352,9 @@ tr:last-child td { border-bottom: 0; }
 .unit-in { position: relative; }
 .unit-in input { width: 100%; min-height: 48px; padding: 0 64px 0 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--ground); font-family: var(--mono); font-size: 17px; text-align: right; }
 .unit-in span { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); font-size: 12.5px; font-weight: 700; color: var(--muted); pointer-events: none; }
+.cv-units .chip { min-height: 34px; padding: 0 12px; font-size: 13px; }
+.cv-jump { margin-bottom: 2px; }
+.cv-jump .chip { min-height: 36px; font-size: 13.5px; }
 .ref-row { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; color: var(--muted); }
 .ref-row b { font-family: var(--mono); font-weight: 600; color: var(--ink); }
 .state-pick { min-height: 48px; padding: 0 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--card); font-size: 15.5px; font-weight: 700; width: 100%; }
@@ -1205,30 +1216,90 @@ tr:last-child td { border-bottom: 0; }
   // ===================== Converter =====================
   const L_PER_GAL = 3.785411784, KM_PER_MI = 1.609344;
   const fmtN = (n, d) => (isFinite(n) ? (Math.round(n * 10 ** d) / 10 ** d).toString() : "");
-  function renderConvert() {
+  const fmtRef = (n, d) => n.toLocaleString("en-US", { maximumFractionDigits: d, minimumFractionDigits: 0 });
+  const CV_ICON = {
+    cash: '<rect x="3" y="6.5" width="18" height="11" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6.5 9.5v5M17.5 9.5v5"/>',
+    pump: '<path d="M5 20V5a1.5 1.5 0 0 1 1.5-1.5h6A1.5 1.5 0 0 1 14 5v15"/><path d="M4 20h11M7 8h5"/><path d="M14 10h2a1.5 1.5 0 0 1 1.5 1.5V16a1.5 1.5 0 0 0 3 0V8.5L18 6"/>',
+    thermo: '<path d="M10 13.5V5a2 2 0 1 1 4 0v8.5a4 4 0 1 1-4 0z"/><path d="M12 9v6.5"/>',
+    gauge: '<path d="M4.5 16a7.5 7.5 0 1 1 15 0"/><path d="M12 16l3.5-4.5"/><path d="M4.5 19.5h15"/>',
+    ruler: '<rect x="3" y="8" width="18" height="8" rx="1.5"/><path d="M7 8v3M11 8v4M15 8v3"/>',
+    drop: '<path d="M12 3.5s-6 6.6-6 10.5a6 6 0 0 0 12 0c0-3.9-6-10.5-6-10.5z"/>',
+    scale: '<path d="M5.5 8h13l2 12h-17z"/><circle cx="12" cy="13.5" r="2.6"/><path d="M12 4.5V8"/>',
+    basket: '<path d="M4 10h16l-1.8 9.5H5.8z"/><path d="M8.5 10l3-5.5M15.5 10l-3-5.5"/>'
+  };
+  // Unit sets: [key, chip label, from unit, to unit, factor, decimals, example values]
+  const CV_UNITS = {
+    len: [["ft", "ft", "ft", "m", 0.3048, 1, [6, 1000, 10000]], ["in", "in", "in", "cm", 2.54, 1, [12, 32, 60]], ["yd", "yd", "yd", "m", 0.9144, 1, [10, 100]], ["mi", "mi", "mi", "km", KM_PER_MI, 1, [1, 10, 26.2]]],
+    vol: [["floz", "fl oz", "fl oz", "ml", 29.5735295625, 0, [8, 12, 16, 20]], ["cup", "cup", "cup", "ml", 236.5882365, 0, [0.5, 1, 2]], ["pint", "pint", "pint", "ml", 473.176473, 0, [1, 2]], ["qt", "quart", "qt", "L", 0.946352946, 2, [1, 2]], ["gal", "gal", "gal", "L", L_PER_GAL, 2, [1, 5]]],
+    wt: [["lb", "lb", "lb", "kg", 0.45359237, 2, [1, 5, 50]], ["oz", "oz", "oz", "g", 28.349523125, 0, [4, 8, 16]]],
+    groc: [["lb", "per lb", "$/lb", "/kg", 1 / 0.45359237, 2, [1.99, 3.99, 9.99]], ["oz", "per oz", "$/oz", "/100g", 100 / 28.349523125, 2, [0.25, 0.5, 1]]]
+  };
+  S.cvu = Object.assign({ len: "ft", vol: "floz", wt: "lb", groc: "lb" }, store.get("cvu", {}));
+  S.cvv = S.cvv || {};
+  function cvDef(k) {
     const ci = curInfo(S.cur), hf = homeFactor();
-    const fee = +S.cardFee || 0;
-    const examples = [3.5, 4.5, 5.5].map(g => '<span>$' + g.toFixed(2) + '/gal = <b>' + ci.s + (g / L_PER_GAL * hf).toFixed(2) + '/L</b></span>').join("");
-    $("#g-body").innerHTML =
-      '<section class="card conv"><h3>' + ico("car") + 'Petrol</h3>' +
-      '<div class="pair"><div class="unit-in"><input type="text" inputmode="decimal" id="cv-gal" placeholder="4.50" aria-label="US dollars per gallon"><span>$/gal</span></div><span class="eq">=</span><div class="unit-in"><input type="text" inputmode="decimal" id="cv-l" placeholder="' + (4.5 / L_PER_GAL * hf).toFixed(2) + '" aria-label="Home currency per litre"><span>' + ci.s + '/L</span></div></div>' +
-      '<div class="ref-row">' + examples + '</div><p class="hint">US pumps price by the gallon (3.785 L). Uses your exchange rate' + (fee ? " and " + fee + "% card fee" : "") + '.</p></section>' +
-      '<section class="card conv"><h3><svg class="i" viewBox="0 0 24 24"><path d="M10 13.5V5a2 2 0 1 1 4 0v8.5a4 4 0 1 1-4 0z"/><path d="M12 9v6.5"/></svg>Temperature</h3>' +
-      '<div class="pair"><div class="unit-in"><input type="text" inputmode="decimal" id="cv-f" placeholder="75" aria-label="Fahrenheit"><span>°F</span></div><span class="eq">=</span><div class="unit-in"><input type="text" inputmode="decimal" id="cv-c" placeholder="23.9" aria-label="Celsius"><span>°C</span></div></div>' +
-      '<div class="ref-row"><span>32°F = <b>0°C</b></span><span>70°F = <b>21°C</b></span><span>100°F = <b>38°C</b></span></div></section>' +
-      '<section class="card conv"><h3>' + ico("map") + 'Distance and speed</h3>' +
-      '<div class="pair"><div class="unit-in"><input type="text" inputmode="decimal" id="cv-mi" placeholder="65" aria-label="Miles or mph"><span>mph</span></div><span class="eq">=</span><div class="unit-in"><input type="text" inputmode="decimal" id="cv-km" placeholder="105" aria-label="Kilometres or km/h"><span>km/h</span></div></div>' +
-      '<p class="hint" style="margin:0">Same numbers work for miles to kilometres.</p><div class="ref-row"><span>55 mph = <b>89 km/h</b></span><span>65 mph = <b>105 km/h</b></span><span>75 mph = <b>121 km/h</b></span></div></section>';
+    if (k === "money") return { a: "US$", b: ci.s, to: x => x * hf, from: x => x / hf, d: 2, ex: [10, 20, 50, 100], ra: "$", rb: ci.s, fixed: 2 };
+    if (k === "fuel") return { a: "$/gal", b: ci.s + "/L", to: x => x / L_PER_GAL * hf, from: x => x * L_PER_GAL / hf, d: 2, ex: [3.5, 4.5, 5.5], ra: "$", rb: ci.s, sa: "/gal", sb: "/L", fixed: 2 };
+    if (k === "temp") return { a: "°F", b: "°C", to: x => (x - 32) * 5 / 9, from: x => x * 9 / 5 + 32, d: 1, ex: [32, 70, 100, 350], sa: "°F", sb: "°C", rd: 0 };
+    if (k === "speed") return { a: "mph", b: "km/h", to: x => x * KM_PER_MI, from: x => x / KM_PER_MI, d: 0, ex: [25, 55, 65, 75], sa: " mph", sb: " km/h" };
+    const u = CV_UNITS[k].find(x => x[0] === S.cvu[k]) || CV_UNITS[k][0];
+    const f = k === "groc" ? u[4] * hf : u[4];
+    const money = k === "groc";
+    return { a: u[2], b: money ? ci.s + u[3] : u[3], to: x => x * f, from: x => x / f, d: money ? 2 : u[5], ex: u[6], ra: money ? "$" : "", rb: money ? ci.s : "", sa: money ? u[2].slice(1) : " " + u[2], sb: money ? u[3] : " " + u[3], fixed: money ? 2 : null };
+  }
+  const CV_CARDS = [
+    ["money", "Money", "cash", "Any US price in your money, with your card fee."],
+    ["fuel", "Petrol", "pump", "US pumps price by the gallon (3.785 L)."],
+    ["temp", "Temperature", "thermo", "Weather, ovens and pools are all in °F."],
+    ["speed", "Speed", "gauge", "Speed limits are in mph. Most highways are 55 to 75."],
+    ["len", "Distance and height", "ruler", "Trail lengths are in miles and elevations in feet."],
+    ["vol", "Volume", "drop", "Drinks use US fl oz (29.6 ml). A US pint is 473 ml, smaller than an Aussie pint (570 ml)."],
+    ["wt", "Weight", "scale", "A quarter-pound burger is 113 g. Luggage limits are often 50 lb (23 kg)."],
+    ["groc", "Grocery prices", "basket", "Shelf tags show price per lb or per oz. This gives the price per kg or 100 g."]
+  ];
+  const CV_JUMP = { money: "Money", fuel: "Petrol", temp: "Temp", speed: "Speed", len: "Distance", vol: "Volume", wt: "Weight", groc: "Groceries" };
+  function cvRefs(k) {
+    const d = cvDef(k);
+    return d.ex.map(x => {
+      const fa = d.fixed ? x.toFixed(d.fixed) : fmtRef(x, 2), fb = d.fixed ? d.to(x).toFixed(d.fixed) : fmtRef(d.to(x), d.rd != null ? d.rd : d.d);
+      return '<span>' + (d.ra || "") + fa + (d.sa || "") + ' = <b>' + (d.rb || "") + fb + (d.sb || "") + '</b></span>';
+    }).join("");
+  }
+  const padFor = (label) => "padding-right:" + Math.round(18 + label.length * 8) + "px";
+  function cvCard([k, title, icon, hint]) {
+    const d = cvDef(k), fee = +S.cardFee || 0;
+    const units = CV_UNITS[k] ? '<div class="chips cv-units">' + CV_UNITS[k].map(u => '<button type="button" class="chip" data-cvu="' + k + ':' + u[0] + '" aria-pressed="' + (S.cvu[k] === u[0]) + '">' + u[1] + '</button>').join("") + '</div>' : '';
+    const money = k === "money" || k === "fuel" || k === "groc";
+    return '<section class="card conv" id="cvc-' + k + '"><h3><svg class="i" viewBox="0 0 24 24">' + CV_ICON[icon] + '</svg>' + title + '</h3>' + units +
+      '<div class="pair"><div class="unit-in"><input type="text" inputmode="decimal" id="cv-' + k + '-a" style="' + padFor(d.a) + '" aria-label="' + esc(d.a) + '" autocomplete="off"><span id="cv-' + k + '-la">' + esc(d.a) + '</span></div><span class="eq">=</span>' +
+      '<div class="unit-in"><input type="text" inputmode="decimal" id="cv-' + k + '-b" style="' + padFor(d.b) + '" aria-label="' + esc(d.b) + '" autocomplete="off"><span id="cv-' + k + '-lb">' + esc(d.b) + '</span></div></div>' +
+      '<div class="ref-row" id="cv-' + k + '-refs">' + cvRefs(k) + '</div><p class="hint" style="margin:0">' + esc(hint) + (money ? " Uses 1 USD = " + fxRate() + " " + S.cur + (fee ? " plus " + fee + "% card fee" : "") + "." : "") + '</p></section>';
+  }
+  function renderConvert() {
+    $("#g-body").innerHTML = '<div class="chips scroll cv-jump" role="group" aria-label="Jump to">' + CV_CARDS.map(c => '<button type="button" class="chip" data-cvjump="' + c[0] + '">' + CV_JUMP[c[0]] + '</button>').join("") + '</div>' + CV_CARDS.map(cvCard).join("");
+    Object.keys(S.cvv).forEach(k => { const v = S.cvv[k]; const el = $("#cv-" + k + "-" + v.side); if (el) { el.value = v.raw; convInput(el.id, v.raw); } });
+  }
+  function refreshCvCard(k) {
+    const d = cvDef(k);
+    $("#cv-" + k + "-la").textContent = d.a; $("#cv-" + k + "-lb").textContent = d.b;
+    $("#cv-" + k + "-a").setAttribute("aria-label", d.a); $("#cv-" + k + "-b").setAttribute("aria-label", d.b);
+    $("#cv-" + k + "-a").style.paddingRight = padFor(d.a).split(":")[1]; $("#cv-" + k + "-b").style.paddingRight = padFor(d.b).split(":")[1];
+    $("#cv-" + k + "-refs").innerHTML = cvRefs(k);
+    $$('[data-cvu^="' + k + ':"]').forEach(x => x.setAttribute("aria-pressed", String(x.dataset.cvu === k + ":" + S.cvu[k])));
+    const v = S.cvv[k]; if (v) convInput("cv-" + k + "-" + v.side, v.raw);
   }
   function convInput(id, raw) {
-    const v = num(raw), empty = String(raw).trim() === "", hf = homeFactor();
-    const set = (oid, val) => { $("#" + oid).value = empty ? "" : val; };
-    if (id === "cv-gal") set("cv-l", fmtN(v / L_PER_GAL * hf, 2));
-    if (id === "cv-l") set("cv-gal", fmtN(v * L_PER_GAL / hf, 2));
-    if (id === "cv-f") set("cv-c", fmtN((v - 32) * 5 / 9, 1));
-    if (id === "cv-c") set("cv-f", fmtN(v * 9 / 5 + 32, 1));
-    if (id === "cv-mi") set("cv-km", fmtN(v * KM_PER_MI, 1));
-    if (id === "cv-km") set("cv-mi", fmtN(v / KM_PER_MI, 1));
+    const m = /^cv-(\w+)-(a|b)$/.exec(id); if (!m) return;
+    const k = m[1], side = m[2], d = cvDef(k);
+    const empty = String(raw).trim() === "";
+    const neg = k === "temp" && /^\s*-/.test(String(raw));
+    const v = num(raw) * (neg ? -1 : 1);
+    S.cvv[k] = { side, raw };
+    if (empty) delete S.cvv[k];
+    const other = $("#cv-" + k + "-" + (side === "a" ? "b" : "a"));
+    if (!other) return;
+    const out = side === "a" ? d.to(v) : d.from(v);
+    other.value = empty || !isFinite(out) ? "" : (d.fixed ? out.toFixed(d.fixed) : fmtN(out, d.d));
   }
 
   // ===================== Check a bill =====================
@@ -1339,6 +1410,8 @@ tr:last-child td { border-bottom: 0; }
     if (d.del) return delBill(d.del);
     if (d.gtab) { S.gtab = d.gtab; return renderGuide(); }
     if (d.gstate) { S.gstate = d.gstate; return renderGuide(); }
+    if (d.cvu) { const [k, u] = d.cvu.split(":"); S.cvu[k] = u; store.set("cvu", S.cvu); return refreshCvCard(k); }
+    if (d.cvjump) { const el = $("#cvc-" + d.cvjump); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); return; }
     if (d.cur) { S.cur = d.cur; store.set("cur", S.cur); return renderSettings(); }
     if (d.defbasis) { S.defBasis = d.defbasis; store.set("defBasis", S.defBasis); return renderSettings(); }
     switch (d.act) {
@@ -1394,6 +1467,13 @@ tr:last-child td { border-bottom: 0; }
     }
     if (e.key === "Enter" && e.target.id === "r-note") saveToBills();
   });
+
+  // Block pinch zoom on iOS (it ignores user-scalable=no) and the long-press menu outside text fields.
+  ["gesturestart", "gesturechange", "gestureend"].forEach(ev => document.addEventListener(ev, e => e.preventDefault(), { passive: false }));
+  document.addEventListener("touchmove", e => { if (e.touches && e.touches.length > 1) e.preventDefault(); }, { passive: false });
+  document.addEventListener("contextmenu", e => { if (!e.target.closest("input, textarea, select")) e.preventDefault(); });
+  document.addEventListener("selectstart", e => { if (!e.target.closest || !e.target.closest("input, textarea")) e.preventDefault(); });
+  document.addEventListener("dblclick", e => e.preventDefault(), { passive: false });
 
   // ===================== Boot =====================
   const LOGO = $(".welcome .hero img").getAttribute("src");
